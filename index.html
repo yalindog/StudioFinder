@@ -154,9 +154,13 @@ async function loadFreestyle(date, startMin, endMin, minSize, maxSize) {
     return;
   }
 
-  // Filter by size
+  // Size is embedded in name like "小巨蛋FreeStyle G (11坪)"
+  function roomSize(r) {
+    const m = (r.name ?? '').match(/\((\d+(?:\.\d+)?)坪\)/);
+    return m ? parseFloat(m[1]) : 0;
+  }
   const filtered = rooms.filter(r => {
-    const sz = parseFloat(r.size ?? r.area ?? r.ping ?? r.坪數 ?? 0);
+    const sz = roomSize(r);
     return sz >= minSize && sz <= maxSize;
   });
 
@@ -169,7 +173,7 @@ async function loadFreestyle(date, startMin, endMin, minSize, maxSize) {
 
   // Fetch bookings in parallel
   const results = await Promise.allSettled(filtered.map(async room => {
-    const id = room.QRID ?? room.qrid ?? room.id ?? room.room_id;
+    const id = room.qrid ?? room.QRID ?? room.id ?? room.room_id;
     let bookings = [];
     try {
       const data = await fetchJson(`${FS_BASE}/get_room_bookingtime?QRID=${id}`);
@@ -183,9 +187,9 @@ async function loadFreestyle(date, startMin, endMin, minSize, maxSize) {
   for (const r of results) {
     if (r.status !== 'fulfilled') continue;
     const { room, conflict } = r.value;
-    const sz = parseFloat(room.size ?? room.area ?? room.ping ?? room.坪數 ?? 0);
-    const name = room.room_name ?? room.name ?? room.QRID ?? '未知';
-    const branch = room.branch ?? room.store ?? '';
+    const sz = roomSize(room);
+    const name = (room.name ?? '').replace(/\(\d+(?:\.\d+)?坪\)/, '').trim();
+    const branch = '';
     const icon = conflict ? '❌' : '✅';
     const statusClass = conflict ? 'room-conflict' : 'room-ok';
     const statusText = conflict
@@ -258,11 +262,20 @@ async function loadDeyi(date, startMin, endMin, minSize, maxSize) {
   el.innerHTML = '<div class="loading"><span class="spinner"></span>載入德藝資料...</div>';
 
   let csv;
+  // Google Sheets public exports have CORS headers — try direct first
   try {
-    csv = await fetchViaProxies(DEYI_CSV, true);
-  } catch (e) {
-    el.innerHTML = `<div class="error-msg">無法取得德藝資料：${e.message}</div>`;
-    return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    const r = await fetch(DEYI_CSV, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (r.ok) csv = await r.text();
+    else throw new Error('HTTP ' + r.status);
+  } catch (_) {
+    try { csv = await fetchViaProxies(DEYI_CSV, true); }
+    catch (e) {
+      el.innerHTML = `<div class="error-msg">無法取得德藝資料：${e.message}<br><small>請確認試算表已設為「任何人都可以檢視」</small></div>`;
+      return;
+    }
   }
 
   const rows = parseCSV(csv);
