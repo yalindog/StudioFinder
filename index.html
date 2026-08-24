@@ -18,13 +18,17 @@
     font-size: 0.95rem; background: #fafafa; flex: 1; min-width: 0;
   }
   .tilde { color: #999; flex-shrink: 0; }
-  button#searchBtn {
-    width: 100%; padding: 12px; background: #4f46e5; color: #fff;
-    border: none; border-radius: 10px; font-size: 1rem; font-weight: 600;
-    cursor: pointer; margin-top: 4px;
+  .btn-row { display: flex; gap: 8px; margin-top: 4px; }
+  .btn {
+    flex: 1; padding: 12px; color: #fff;
+    border: none; border-radius: 10px; font-size: 0.95rem; font-weight: 600;
+    cursor: pointer;
   }
-  button#searchBtn:active { background: #3730a3; }
-  button#searchBtn:disabled { background: #a5a0d9; cursor: not-allowed; }
+  .btn-avail { background: #16a34a; }
+  .btn-avail:active { background: #15803d; }
+  .btn-booked { background: #4f46e5; }
+  .btn-booked:active { background: #3730a3; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .section { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 16px; }
   .section-title { font-size: 1rem; font-weight: 700; margin-bottom: 12px; color: #1a1a2e; border-bottom: 2px solid #e0e0e0; padding-bottom: 8px; }
@@ -75,7 +79,10 @@
       <span class="tilde">～</span>
       <input type="number" id="maxSize" value="20" min="0" max="100" />
     </div>
-    <button id="searchBtn" onclick="doSearch()">查詢</button>
+    <div class="btn-row">
+      <button class="btn btn-avail" onclick="doSearch('available')">可預約查詢</button>
+      <button class="btn btn-booked" onclick="doSearch('booked')">已預約查詢</button>
+    </div>
   </div>
 
   <div id="freestyleSection" class="section hidden">
@@ -142,7 +149,7 @@ function hasOverlap(bookings, s1, e1) {
   return null;
 }
 
-async function loadFreestyle(date, startMin, endMin, minSize, maxSize) {
+async function loadFreestyle(date, startMin, endMin, minSize, maxSize, mode) {
   const el = document.getElementById('freestyleContent');
   el.innerHTML = '<div class="loading"><span class="spinner"></span>載入教室清單...</div>';
 
@@ -187,9 +194,10 @@ async function loadFreestyle(date, startMin, endMin, minSize, maxSize) {
   for (const r of results) {
     if (r.status !== 'fulfilled') continue;
     const { room, conflict } = r.value;
+    if (mode === 'available' && conflict) continue;
+    if (mode === 'booked' && !conflict) continue;
     const sz = roomSize(room);
     const name = (room.name ?? '').replace(/\(\d+(?:\.\d+)?坪\)/, '').trim();
-    const branch = '';
     const icon = conflict ? '❌' : '✅';
     const statusClass = conflict ? 'room-conflict' : 'room-ok';
     const statusText = conflict
@@ -200,7 +208,7 @@ async function loadFreestyle(date, startMin, endMin, minSize, maxSize) {
     item.innerHTML = `
       <span class="status-icon">${icon}</span>
       <div class="room-info">
-        <span class="room-name">${branch} ${name}</span>
+        <span class="room-name">${name}</span>
         <span class="tag-${conflict ? 'conflict' : 'ok'}">${sz ? sz + '坪' : ''}</span>
         <div class="${statusClass}">${statusText}</div>
       </div>`;
@@ -257,7 +265,7 @@ function extractTimes(text) {
   return times;
 }
 
-async function loadDeyi(date, startMin, endMin, minSize, maxSize) {
+async function loadDeyi(date, startMin, endMin, minSize, maxSize, mode) {
   const el = document.getElementById('deyiContent');
   el.innerHTML = '<div class="loading"><span class="spinner"></span>載入德藝資料...</div>';
 
@@ -338,6 +346,9 @@ async function loadDeyi(date, startMin, endMin, minSize, maxSize) {
     div.className = 'deyi-room';
     let inner = `<div class="deyi-room-name">${rm.name} (${sizeLabel})</div>`;
 
+    if (mode === 'available' && records.length > 0) continue;
+    if (mode === 'booked'    && records.length === 0) continue;
+
     if (records.length === 0) {
       inner += `<div class="deyi-empty">✅ 無申請記錄</div>`;
     } else {
@@ -377,7 +388,7 @@ if (location.protocol === 'file:') {
   document.getElementById('date').value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
 })();
 
-async function doSearch() {
+async function doSearch(mode) {
   const date     = document.getElementById('date').value;
   const startStr = document.getElementById('startTime').value;
   const endStr   = document.getElementById('endTime').value;
@@ -388,20 +399,18 @@ async function doSearch() {
   const startMin = timeCmp(startStr), endMin = timeCmp(endStr);
   if (startMin >= endMin) { alert('結束時間必須晚於開始時間'); return; }
 
-  const btn = document.getElementById('searchBtn');
-  btn.disabled = true;
-  btn.textContent = '查詢中...';
+  const btns = document.querySelectorAll('.btn');
+  btns.forEach(b => b.disabled = true);
 
   document.getElementById('freestyleSection').classList.remove('hidden');
   document.getElementById('deyiSection').classList.remove('hidden');
 
   await Promise.allSettled([
-    loadFreestyle(date, startMin, endMin, minSize, maxSize),
-    loadDeyi(date, startMin, endMin, minSize, maxSize),
+    loadFreestyle(date, startMin, endMin, minSize, maxSize, mode),
+    loadDeyi(date, startMin, endMin, minSize, maxSize, mode),
   ]);
 
-  btn.disabled = false;
-  btn.textContent = '查詢';
+  btns.forEach(b => b.disabled = false);
 }
 </script>
 </body>
