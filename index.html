@@ -281,75 +281,69 @@ async function loadDeyi(date, startMin, endMin, minSize, maxSize) {
   const rows = parseCSV(csv);
   if (rows.length === 0) { el.innerHTML = '<div class="loading">無資料</div>'; return; }
 
-  const header = rows[0].map(c => c.trim());
-  // Find column indices (heuristic)
-  function colIdx(...names) {
-    for (const n of names) {
-      const i = header.findIndex(h => h.includes(n));
-      if (i >= 0) return i;
-    }
-    return -1;
+  // CSV structure: each room is a column, not a row field
+  // Header: 時間戳記, LINE名稱, 用途, 八德教室 預約時段:, 復北教室 預約時段:, 承德大..., ...
+  const header = rows[0];
+  const userCol = 1; // LINE名稱
+
+  // Build room → column index map
+  function getRoomCol(roomName) {
+    return header.findIndex(h => h.includes(roomName));
   }
-  const dateCol  = colIdx('日期', 'date', 'Date');
-  const roomCol  = colIdx('教室', '場地', 'room', '空間');
-  const typeCol  = colIdx('類型', '申請類型', '操作', 'type');
-  const userCol  = colIdx('姓名', '申請人', 'name', 'user');
-  const noteCol  = colIdx('備註', '說明', '時間', 'note', '申請時段');
-  // If no date col found, scan all cells for date string
-  const dateFallback = dateCol < 0;
+
+  // Date matching: target date "2026-09-08" → match "9/8" or "9月8日" in cell
+  const [, qMonth, qDay] = date.split('-').map(Number);
+  const qYear = parseInt(date.split('-')[0]);
+  // Regex: match M/D or M月D (with no surrounding digits)
+  const datePat = new RegExp(`(?<![\\d])${qMonth}[/月]0?${qDay}(?![\\d])`, 'g');
+
+  function dateInCell(cell) {
+    // If cell has explicit year, only match if year is correct
+    const yearHit = /(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/g;
+    let m; yearHit.lastIndex = 0;
+    while ((m = yearHit.exec(cell)) !== null) {
+      if (parseInt(m[2]) === qMonth && parseInt(m[3]) === qDay) {
+        return parseInt(m[1]) === qYear;
+      }
+    }
+    // Otherwise match M/D without year
+    datePat.lastIndex = 0;
+    return datePat.test(cell);
+  }
 
   const eligible = DEYI_ROOMS.filter(rm => {
-    if (rm.size === null) return true; // unknown size: always show
+    if (rm.size === null) return true;
     return rm.size >= minSize && rm.size <= maxSize;
   });
 
-  // Collect records per room for the target date
-  const roomRecords = {};
-  for (const rm of eligible) roomRecords[rm.name] = [];
-
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.every(c => !c.trim())) continue;
-    const rowStr = row.join(' ');
-
-    // Date match
-    const dateMatch = dateFallback
-      ? rowStr.includes(date) || rowStr.includes(date.replace(/-/g, '/'))
-      : (row[dateCol] ?? '').includes(date.replace(/-/g, '/')) || (row[dateCol] ?? '').includes(date);
-
-    if (!dateMatch) continue;
-
-    // Room match
-    for (const rm of eligible) {
-      const inRoom = roomCol >= 0
-        ? (row[roomCol] ?? '').includes(rm.name)
-        : rowStr.includes(rm.name);
-      if (!inRoom) continue;
-
-      const user = userCol >= 0 ? (row[userCol] ?? '') : '';
-      const type = typeCol >= 0 ? (row[typeCol] ?? '') : '';
-      const note = noteCol >= 0 ? (row[noteCol] ?? '') : rowStr;
-      const times = extractTimes(rowStr); // parse times from entire row
-
-      roomRecords[rm.name].push({ user, type, note, times, raw: rowStr });
-    }
-  }
-
   el.innerHTML = '';
   for (const rm of eligible) {
-    const records = roomRecords[rm.name];
+    const col = getRoomCol(rm.name);
     const sizeLabel = rm.size ? `${rm.size}坪` : '坪數未知';
+    const records = [];
+
+    if (col >= 0) {
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length <= col) continue;
+        const cell = (row[col] || '').trim();
+        if (!cell || !dateInCell(cell)) continue;
+        const user = (row[userCol] || '').trim();
+        const times = extractTimes(cell);
+        records.push({ user, cell, times });
+      }
+    }
+
     const div = document.createElement('div');
     div.className = 'deyi-room';
-
     let inner = `<div class="deyi-room-name">${rm.name} (${sizeLabel})</div>`;
+
     if (records.length === 0) {
       inner += `<div class="deyi-empty">✅ 無申請記錄</div>`;
     } else {
       inner += `<div class="deyi-records">`;
       for (const rec of records) {
         const timesStr = rec.times.map(t => `${t.start}–${t.end}`).join('、') || '';
-        // Check overlap
         let conflictMark = '';
         for (const t of rec.times) {
           if (hasOverlap([{ start: t.start, end: t.end }], startMin, endMin)) {
@@ -357,7 +351,7 @@ async function loadDeyi(date, startMin, endMin, minSize, maxSize) {
             break;
           }
         }
-        inner += `<div class="deyi-record">· ${rec.type ? '['+rec.type+'] ' : ''}${rec.user} ${timesStr}${conflictMark}<br><span style="color:#aaa;font-size:0.75rem">${rec.raw.slice(0,80)}</span></div>`;
+        inner += `<div class="deyi-record">· ${rec.user} ${timesStr}${conflictMark}<br><span style="color:#aaa;font-size:0.75rem">${rec.cell.slice(0, 100)}</span></div>`;
       }
       inner += `</div>`;
     }
