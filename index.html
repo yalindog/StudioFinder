@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Studio Finder</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+  .container { max-width: 600px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; font-weight: 700; margin-bottom: 16px; color: #1a1a2e; }
+  .form-card { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 16px; }
+  .form-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .form-row:last-child { margin-bottom: 0; }
+  label { font-size: 0.85rem; color: #666; width: 40px; flex-shrink: 0; }
+  input[type=date], input[type=time], input[type=number] {
+    border: 1px solid #ddd; border-radius: 8px; padding: 8px 10px;
+    font-size: 0.95rem; background: #fafafa; flex: 1; min-width: 0;
+  }
+  .tilde { color: #999; flex-shrink: 0; }
+  button#searchBtn {
+    width: 100%; padding: 12px; background: #4f46e5; color: #fff;
+    border: none; border-radius: 10px; font-size: 1rem; font-weight: 600;
+    cursor: pointer; margin-top: 4px;
+  }
+  button#searchBtn:active { background: #3730a3; }
+  button#searchBtn:disabled { background: #a5a0d9; cursor: not-allowed; }
+
+  .section { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 16px; }
+  .section-title { font-size: 1rem; font-weight: 700; margin-bottom: 12px; color: #1a1a2e; border-bottom: 2px solid #e0e0e0; padding-bottom: 8px; }
+  .room-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; }
+  .room-item:last-child { border-bottom: none; }
+  .status-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+  .room-info { flex: 1; }
+  .room-name { font-weight: 600; }
+  .room-meta { color: #888; font-size: 0.8rem; margin-top: 2px; }
+  .room-conflict { color: #dc2626; font-size: 0.8rem; margin-top: 2px; }
+  .room-ok { color: #16a34a; font-size: 0.8rem; margin-top: 2px; }
+
+  .deyi-room { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+  .deyi-room:last-child { border-bottom: none; }
+  .deyi-room-name { font-weight: 600; font-size: 0.9rem; }
+  .deyi-records { margin-top: 4px; padding-left: 8px; }
+  .deyi-record { font-size: 0.82rem; color: #555; line-height: 1.5; }
+  .deyi-empty { font-size: 0.82rem; color: #16a34a; margin-top: 4px; }
+  .deyi-conflict { font-size: 0.82rem; color: #dc2626; margin-top: 4px; }
+
+  .loading { color: #666; font-size: 0.9rem; text-align: center; padding: 16px; }
+  .error-msg { color: #dc2626; font-size: 0.85rem; background: #fef2f2; border-radius: 8px; padding: 10px; margin-top: 8px; }
+  .hidden { display: none; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #4f46e5; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .tag-ok { display: inline-block; background: #dcfce7; color: #166534; border-radius: 4px; padding: 1px 6px; font-size: 0.75rem; margin-left: 4px; }
+  .tag-conflict { display: inline-block; background: #fee2e2; color: #991b1b; border-radius: 4px; padding: 1px 6px; font-size: 0.75rem; margin-left: 4px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Studio Finder</h1>
+
+  <div class="form-card">
+    <div class="form-row">
+      <label>日期</label>
+      <input type="date" id="date" />
+    </div>
+    <div class="form-row">
+      <label>時段</label>
+      <input type="time" id="startTime" value="10:00" />
+      <span class="tilde">～</span>
+      <input type="time" id="endTime" value="14:00" />
+    </div>
+    <div class="form-row">
+      <label>坪數</label>
+      <input type="number" id="minSize" value="5" min="0" max="100" />
+      <span class="tilde">～</span>
+      <input type="number" id="maxSize" value="20" min="0" max="100" />
+    </div>
+    <button id="searchBtn" onclick="doSearch()">查詢</button>
+  </div>
+
+  <div id="freestyleSection" class="section hidden">
+    <div class="section-title">Freestyle Studio</div>
+    <div id="freestyleContent"></div>
+  </div>
+
+  <div id="deyiSection" class="section hidden">
+    <div class="section-title">德藝生活（申請記錄參考）</div>
+    <div id="deyiContent"></div>
+  </div>
+</div>
+
+<script>
+// ── Freestyle ──────────────────────────────────────────────────────────────
+
+const FS_BASE = 'https://freestylestudiotw.com/freestyle';
+
+// Try multiple CORS proxies in sequence; asText=true returns string, false returns parsed JSON
+async function fetchViaProxies(url, asText) {
+  const proxied = [
+    `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  ];
+  let lastErr;
+  for (const pUrl of proxied) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const r = await fetch(pUrl, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return asText ? await r.text() : await r.json();
+    } catch (e) {
+      clearTimeout(timer);
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+async function fetchJson(url) { return fetchViaProxies(url, false); }
+
+function timeCmp(t) { // "HH:MM" → minutes
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function hasOverlap(bookings, s1, e1) {
+  // conflict: s2 < e1 AND e2 > s1
+  for (const b of bookings) {
+    const s2 = timeCmp(b.start), e2 = timeCmp(b.end);
+    if (s2 < e1 && e2 > s1) return b;
+  }
+  return null;
+}
+
+async function loadFreestyle(date, startMin, endMin, minSize, maxSize) {
+  const el = document.getElementById('freestyleContent');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>載入教室清單...</div>';
+
+  let rooms;
+  try {
+    rooms = await fetchJson(`${FS_BASE}/get_room_info?BRAND=freestyle`);
+  } catch (e) {
+    el.innerHTML = `<div class="error-msg">無法取得教室清單：${e.message}</div>`;
+    return;
+  }
+
+  // Filter by size
+  const filtered = rooms.filter(r => {
+    const sz = parseFloat(r.size ?? r.area ?? r.ping ?? r.坪數 ?? 0);
+    return sz >= minSize && sz <= maxSize;
+  });
+
+  if (filtered.length === 0) {
+    el.innerHTML = '<div class="loading">此坪數範圍無符合教室</div>';
+    return;
+  }
+
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>查詢各教室時段...</div>';
+
+  // Fetch bookings in parallel
+  const results = await Promise.allSettled(filtered.map(async room => {
+    const id = room.QRID ?? room.qrid ?? room.id ?? room.room_id;
+    let bookings = [];
+    try {
+      const data = await fetchJson(`${FS_BASE}/get_room_bookingtime?QRID=${id}`);
+      bookings = (Array.isArray(data) ? data : []).filter(b => b.date === date);
+    } catch (_) { /* skip */ }
+    const conflict = hasOverlap(bookings, startMin, endMin);
+    return { room, bookings, conflict };
+  }));
+
+  el.innerHTML = '';
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue;
+    const { room, conflict } = r.value;
+    const sz = parseFloat(room.size ?? room.area ?? room.ping ?? room.坪數 ?? 0);
+    const name = room.room_name ?? room.name ?? room.QRID ?? '未知';
+    const branch = room.branch ?? room.store ?? '';
+    const icon = conflict ? '❌' : '✅';
+    const statusClass = conflict ? 'room-conflict' : 'room-ok';
+    const statusText = conflict
+      ? `衝突：${conflict.name ?? ''} ${conflict.start}–${conflict.end}`
+      : '時段空閒';
+    const item = document.createElement('div');
+    item.className = 'room-item';
+    item.innerHTML = `
+      <span class="status-icon">${icon}</span>
+      <div class="room-info">
+        <span class="room-name">${branch} ${name}</span>
+        <span class="tag-${conflict ? 'conflict' : 'ok'}">${sz ? sz + '坪' : ''}</span>
+        <div class="${statusClass}">${statusText}</div>
+      </div>`;
+    el.appendChild(item);
+  }
+  if (!el.children.length) el.innerHTML = '<div class="loading">無結果</div>';
+}
+
+// ── 德藝生活 ───────────────────────────────────────────────────────────────
+
+const DEYI_CSV = 'https://docs.google.com/spreadsheets/d/15U-ip-QBKdcvbkpusiBE8I5DHsMqsNXuuHcL5YMhAnM/export?format=csv';
+
+const DEYI_ROOMS = [
+  { name: '承德大', size: 18 },
+  { name: '承德中', size: 12 },
+  { name: '承德小', size: 8 },
+  { name: '四平A',  size: 11 },
+  { name: '四平B',  size: 10 },
+  { name: '四平C',  size: 10 },
+  { name: '四平D',  size: 10 },
+  { name: '八德',   size: null },
+  { name: '復北',   size: null },
+];
+
+function parseCSV(text) {
+  const rows = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    // simple CSV split (no embedded newlines)
+    const cells = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === '"') { inQ = !inQ; }
+      else if (line[i] === ',' && !inQ) { cells.push(cur); cur = ''; }
+      else { cur += line[i]; }
+    }
+    cells.push(cur);
+    rows.push(cells);
+  }
+  return rows;
+}
+
+// Extract time ranges like 10:00-12:00 or 10:00~12:00
+const TIME_RE = /(\d{1,2}:\d{2})\s*[-~到至]\s*(\d{1,2}:\d{2})/g;
+
+function extractTimes(text) {
+  const times = [];
+  let m;
+  TIME_RE.lastIndex = 0;
+  while ((m = TIME_RE.exec(text)) !== null) {
+    times.push({ start: m[1].padStart(5,'0'), end: m[2].padStart(5,'0') });
+  }
+  return times;
+}
+
+async function loadDeyi(date, startMin, endMin, minSize, maxSize) {
+  const el = document.getElementById('deyiContent');
+  el.innerHTML = '<div class="loading"><span class="spinner"></span>載入德藝資料...</div>';
+
+  let csv;
+  try {
+    csv = await fetchViaProxies(DEYI_CSV, true);
+  } catch (e) {
+    el.innerHTML = `<div class="error-msg">無法取得德藝資料：${e.message}</div>`;
+    return;
+  }
+
+  const rows = parseCSV(csv);
+  if (rows.length === 0) { el.innerHTML = '<div class="loading">無資料</div>'; return; }
+
+  const header = rows[0].map(c => c.trim());
+  // Find column indices (heuristic)
+  function colIdx(...names) {
+    for (const n of names) {
+      const i = header.findIndex(h => h.includes(n));
+      if (i >= 0) return i;
+    }
+    return -1;
+  }
+  const dateCol  = colIdx('日期', 'date', 'Date');
+  const roomCol  = colIdx('教室', '場地', 'room', '空間');
+  const typeCol  = colIdx('類型', '申請類型', '操作', 'type');
+  const userCol  = colIdx('姓名', '申請人', 'name', 'user');
+  const noteCol  = colIdx('備註', '說明', '時間', 'note', '申請時段');
+  // If no date col found, scan all cells for date string
+  const dateFallback = dateCol < 0;
+
+  const eligible = DEYI_ROOMS.filter(rm => {
+    if (rm.size === null) return true; // unknown size: always show
+    return rm.size >= minSize && rm.size <= maxSize;
+  });
+
+  // Collect records per room for the target date
+  const roomRecords = {};
+  for (const rm of eligible) roomRecords[rm.name] = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.every(c => !c.trim())) continue;
+    const rowStr = row.join(' ');
+
+    // Date match
+    const dateMatch = dateFallback
+      ? rowStr.includes(date) || rowStr.includes(date.replace(/-/g, '/'))
+      : (row[dateCol] ?? '').includes(date.replace(/-/g, '/')) || (row[dateCol] ?? '').includes(date);
+
+    if (!dateMatch) continue;
+
+    // Room match
+    for (const rm of eligible) {
+      const inRoom = roomCol >= 0
+        ? (row[roomCol] ?? '').includes(rm.name)
+        : rowStr.includes(rm.name);
+      if (!inRoom) continue;
+
+      const user = userCol >= 0 ? (row[userCol] ?? '') : '';
+      const type = typeCol >= 0 ? (row[typeCol] ?? '') : '';
+      const note = noteCol >= 0 ? (row[noteCol] ?? '') : rowStr;
+      const times = extractTimes(rowStr); // parse times from entire row
+
+      roomRecords[rm.name].push({ user, type, note, times, raw: rowStr });
+    }
+  }
+
+  el.innerHTML = '';
+  for (const rm of eligible) {
+    const records = roomRecords[rm.name];
+    const sizeLabel = rm.size ? `${rm.size}坪` : '坪數未知';
+    const div = document.createElement('div');
+    div.className = 'deyi-room';
+
+    let inner = `<div class="deyi-room-name">${rm.name} (${sizeLabel})</div>`;
+    if (records.length === 0) {
+      inner += `<div class="deyi-empty">✅ 無申請記錄</div>`;
+    } else {
+      inner += `<div class="deyi-records">`;
+      for (const rec of records) {
+        const timesStr = rec.times.map(t => `${t.start}–${t.end}`).join('、') || '';
+        // Check overlap
+        let conflictMark = '';
+        for (const t of rec.times) {
+          if (hasOverlap([{ start: t.start, end: t.end }], startMin, endMin)) {
+            conflictMark = ' <span class="tag-conflict">衝突</span>';
+            break;
+          }
+        }
+        inner += `<div class="deyi-record">· ${rec.type ? '['+rec.type+'] ' : ''}${rec.user} ${timesStr}${conflictMark}<br><span style="color:#aaa;font-size:0.75rem">${rec.raw.slice(0,80)}</span></div>`;
+      }
+      inner += `</div>`;
+    }
+    div.innerHTML = inner;
+    el.appendChild(div);
+  }
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
+
+// Warn if opened via file:// (fetch will be blocked by browser)
+if (location.protocol === 'file:') {
+  document.body.insertAdjacentHTML('afterbegin',
+    '<div style="background:#fef3c7;color:#92400e;padding:10px 16px;font-size:0.85rem;text-align:center">' +
+    '\u26a0\ufe0f \u8acb\u7528 <strong>studio_finder_start.bat</strong> \u555f\u52d5\uff0c\u4e0d\u8981\u76f4\u63a5\u9ede\u958b HTML \u6a94\u6848\uff01' +
+    '</div>');
+}
+
+// Set default date to today
+(function() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  document.getElementById('date').value = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+})();
+
+async function doSearch() {
+  const date     = document.getElementById('date').value;
+  const startStr = document.getElementById('startTime').value;
+  const endStr   = document.getElementById('endTime').value;
+  const minSize  = parseFloat(document.getElementById('minSize').value) || 0;
+  const maxSize  = parseFloat(document.getElementById('maxSize').value) || 999;
+
+  if (!date || !startStr || !endStr) { alert('請填寫日期和時段'); return; }
+  const startMin = timeCmp(startStr), endMin = timeCmp(endStr);
+  if (startMin >= endMin) { alert('結束時間必須晚於開始時間'); return; }
+
+  const btn = document.getElementById('searchBtn');
+  btn.disabled = true;
+  btn.textContent = '查詢中...';
+
+  document.getElementById('freestyleSection').classList.remove('hidden');
+  document.getElementById('deyiSection').classList.remove('hidden');
+
+  await Promise.allSettled([
+    loadFreestyle(date, startMin, endMin, minSize, maxSize),
+    loadDeyi(date, startMin, endMin, minSize, maxSize),
+  ]);
+
+  btn.disabled = false;
+  btn.textContent = '查詢';
+}
+</script>
+</body>
+</html>
